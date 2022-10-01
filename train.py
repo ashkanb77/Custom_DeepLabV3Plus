@@ -9,8 +9,7 @@ from tqdm import tqdm
 from config import *
 from utils import *
 from dataset import VOCSeg
-
-
+from apex import amp
 
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger('')
@@ -28,28 +27,27 @@ parser.add_argument('--model_name', type=str, default=MODEL_NAME, help='dataset 
 
 args = parser.parse_args()
 
-
 train_transforms = A.Compose([
-        A.Resize(args.image_size + 30, args.image_size + 30),
-        A.RandomCrop(args.image_size, args.image_size),
-        A.HorizontalFlip(p=0.5),
-        A.Rotate(limit=(-20, 20)),
-        A.VerticalFlip(p=0.5),
+    A.Resize(args.image_size + 30, args.image_size + 30),
+    A.RandomCrop(args.image_size, args.image_size),
+    A.HorizontalFlip(p=0.5),
+    A.Rotate(limit=(-20, 20)),
+    A.VerticalFlip(p=0.5),
 ])
 
 test_transforms = A.Compose([
-        A.Resize(args.image_size, args.image_size)
+    A.Resize(args.image_size, args.image_size)
 ])
 
 train_dataset = VOCSeg(
     'dataset', download=True, image_set='train',
-     transforms=train_transforms,
-     )
+    transforms=train_transforms,
+)
 
 val_dataset = VOCSeg(
     'dataset', download=False, image_set='val',
     transforms=test_transforms
-     )
+)
 
 train_dataloader = DataLoader(train_dataset, args.batch_size, True)
 val_dataloader = DataLoader(val_dataset, args.batch_size, True)
@@ -68,6 +66,10 @@ def train(model, train_dataloader, val_dataloader, checkpoint, optimizer, epochs
 
     model.train()
 
+    # Initialization
+    opt_level = 'O1'
+    model, optimizer = amp.initialize(model, optimizer, opt_level=opt_level)
+
     for epoch in range(epochs):
         total_loss = 0
         miou = 0
@@ -84,10 +86,12 @@ def train(model, train_dataloader, val_dataloader, checkpoint, optimizer, epochs
 
                 optimizer.zero_grad()
                 outputs = model(images)
-
                 loss = criterion(outputs['out'], masks.long())
-                iou = jaccard(outputs, masks)
-                loss.backward()
+                iou = jaccard(outputs['out'], masks)
+
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+
                 optimizer.step()
                 total_loss += loss.item()
                 miou += iou.item()
@@ -142,8 +146,8 @@ def eval(model, val_dataloader, checkpoint):
 
             outputs = model(images)
 
-            loss = criterion(outputs, masks.long())
-            iou = jaccard(outputs, masks)
+            loss = criterion(outputs['out'], masks.long())
+            iou = jaccard(outputs['out'], masks)
             total_loss += loss.item()
             miou += iou.item()
 
@@ -155,10 +159,10 @@ def eval(model, val_dataloader, checkpoint):
     return total_loss, miou
 
 
-model = deeplabv3plus_resnet50(pretrained=True, num_classes=22).to(device)
+model = deeplabv3plus_resnet50(pretrained=False, num_classes=22).to(device)
 optimizer = torch.optim.Adam(model.parameters(), args.learning_rate)
 checkpoint = Checkpoint(model, args.model_name, args.checkpoint_dir)
 
 train(
     model, train_dataloader, val_dataloader, checkpoint, optimizer, args.n_epochs, args.learning_rate
-    )
+)

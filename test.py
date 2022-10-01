@@ -15,6 +15,7 @@ parser.add_argument('--checkpoint_path', type=str, required=True, help='checkpoi
 args = parser.parse_args()
 
 model, loss = Checkpoint.load_model(args.checkpoint_path)
+model.eval()
 transform = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
     transforms.ToTensor(),
@@ -27,6 +28,7 @@ img = transform(img).to(device)
 with torch.no_grad():
     outputs = model(img.unsqueeze(0).to('cuda'))
 
-mask = outputs.squeeze(0).argmax(axis=0)
+mask = outputs['out'].squeeze(0).argmax(axis=0)
 mask = array1d_to_pil_image(mask.cpu().numpy())
 plt.imshow(mask)
+plt.show()
